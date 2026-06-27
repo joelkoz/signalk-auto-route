@@ -207,21 +207,31 @@ function chartDirCandidates(app, options) {
   if (options && typeof options.chartPath === 'string' && options.chartPath) {
     dirs.push(options.chartPath)
   }
-  const bases = []
+  const bases = new Set()
+  // Primary: match charts-provider-simple's default location exactly. It stores
+  // charts at dirname(dirname(getDataDirPath()))/charts-simple. Every plugin's
+  // getDataDirPath() shares the same <configBase>/plugin-config-data/<id>
+  // layout, so computing it from THIS plugin's getDataDirPath() resolves to the
+  // same folder — without depending on app.config.configPath (which, as seen on
+  // the n2k dev server, can differ from that base).
+  try {
+    if (typeof app.getDataDirPath === 'function') {
+      bases.add(path.dirname(path.dirname(app.getDataDirPath())))
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     if (app && app.config) {
-      if (app.config.configPath) bases.push(app.config.configPath)
-      if (app.config.appPath && app.config.appPath !== app.config.configPath) {
-        bases.push(app.config.appPath)
-      }
+      if (app.config.configPath) bases.add(app.config.configPath)
+      if (app.config.appPath) bases.add(app.config.appPath)
     }
   } catch {
     /* ignore */
   }
   for (const base of bases) {
-    dirs.push(path.join(base, 'charts'))
     dirs.push(path.join(base, 'charts-simple'))
-    dirs.push(path.join(base, '..', 'charts-simple'))
+    dirs.push(path.join(base, 'charts'))
   }
   return dirs
 }
