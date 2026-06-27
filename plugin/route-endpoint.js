@@ -19,6 +19,11 @@ const { expandRoute, DEFAULTS } = require('../engine/route')
 const { bbox } = require('../engine/geometry')
 const { getLandPolygons, NoLandSourceError } = require('../engine/land-source')
 
+// Coarse early reject: a route bounding box wider/taller than this (degrees) is
+// a continental-scale request, not a local leg around nearby land. Rejecting
+// here avoids reading a huge tile range before the per-segment guards engage.
+const MAX_ROUTE_SPAN_DEG = 1.5
+
 function isFinitePair(p) {
   return (
     Array.isArray(p) &&
@@ -80,11 +85,25 @@ async function handleRouteRequest(body, landSourceOptions = {}) {
     const positions = points.map((p) => [p.position[0], p.position[1]])
     const routeBbox = bbox(positions)
 
+    if (
+      routeBbox[2] - routeBbox[0] > MAX_ROUTE_SPAN_DEG ||
+      routeBbox[3] - routeBbox[1] > MAX_ROUTE_SPAN_DEG
+    ) {
+      throw httpError(
+        422,
+        'route-too-large',
+        'This route spans too large an area to auto-route. Auto-routing is for ' +
+          'local legs around nearby land, not long passages.'
+      )
+    }
+
     let land
     try {
       land = getLandPolygons(routeBbox, landSourceOptions)
     } catch (err) {
-      if (err instanceof NoLandSourceError) {
+      // NoLandSourceError (land-source/none) and the tile-cap guard
+      // (area-too-large) both carry a typed reason → friendly 422.
+      if (err instanceof NoLandSourceError || (err && err.reason)) {
         return httpError(422, err.reason, err.message)
       }
       // Unexpected land-source failure (e.g. missing decode deps, bad file):
@@ -107,7 +126,11 @@ async function handleRouteRequest(body, landSourceOptions = {}) {
       }
     }
   } catch (err) {
-    if (err && err.status && err.body) return err // validation httpError
+    if (err && err.status && err.body) return err // validation/limit httpError
+    // Typed engine error (e.g. route-too-complex from expandRoute) → 422.
+    if (err && err.reason) {
+      return httpError(422, err.reason, err.message)
+    }
     return httpError(500, 'internal', `Unexpected error: ${err.message}`)
   }
 }

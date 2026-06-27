@@ -63,10 +63,20 @@ function visible(a, b, obstacleRings) {
  * O(V^2 * E_obstacle): fine for the bbox-scoped vertex counts this router
  * works with (tens, occasionally low hundreds, of vertices).
  */
+// Absolute backstop on the node count. route.js caps obstacle vertices well
+// below this; this guards direct callers so the O(V^3) build can never run away.
+const MAX_NODES = 600
+
 function buildVisibilityGraph(start, end, polygons, clearance = 0) {
   const obstacleRings = prepareObstacles(polygons, clearance)
   const nodes = collectNodes(start, end, obstacleRings)
   const n = nodes.length
+  if (n > MAX_NODES) {
+    throw Object.assign(
+      new Error(`visibility graph too large: ${n} nodes (max ${MAX_NODES})`),
+      { reason: 'route-too-complex' }
+    )
+  }
   const adj = Array.from({ length: n }, () => [])
 
   for (let i = 0; i < n; i++) {

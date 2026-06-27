@@ -23,6 +23,19 @@ const DEFAULTS = {
   maxViaPoints: 50 // cap on inserted via-points PER crossing segment
 }
 
+const LIMITS = {
+  // The visibility graph is ~O(V^3) and runs SYNCHRONOUSLY in the Signal K
+  // event loop, so the obstacle vertex count must be bounded or a complex
+  // coastline freezes the whole server. Rings are simplified first; past this
+  // cap the segment is refused with a friendly error rather than run away.
+  maxObstacleVertices: 400
+}
+
+/** A typed, user-facing engine error the HTTP layer maps to a 422. */
+function complexityError(message) {
+  return Object.assign(new Error(message), { reason: 'route-too-complex' })
+}
+
 const METRES_PER_DEG_LAT = 111320
 
 /** Metres → degrees, scaled for longitude compression at latitude `lat`. */
@@ -117,8 +130,23 @@ function perpDistance(p, a, b) {
  * intermediate points (excluding a and b), or null if no path is found.
  */
 function detour(a, b, polygons, clearanceDeg, opts) {
-  const obstacles = relevantPolygons(a, b, polygons)
+  let obstacles = relevantPolygons(a, b, polygons)
   if (obstacles.length === 0) return []
+
+  // Bound the visibility-graph cost. We already keep a clearance margin, so
+  // mildly simplifying each obstacle ring is safe; then hard-cap the total
+  // vertex count to keep the synchronous O(V^3) build from running away on a
+  // complex coastline (which would freeze the server).
+  const tol = Math.max(clearanceDeg * 0.5, 1e-7)
+  obstacles = obstacles.map((poly) => [simplifyPath(outerRing(poly), tol)])
+  const totalV = obstacles.reduce((s, p) => s + p[0].length, 0)
+  if (totalV > LIMITS.maxObstacleVertices) {
+    throw complexityError(
+      'This segment crosses too much land or coastline to auto-route. Move the ' +
+        'start or end toward open water, or add via-points to split it into ' +
+        'shorter legs.'
+    )
+  }
 
   const graph = buildVisibilityGraph(a, b, obstacles, clearanceDeg)
   // start = node 0, end = node 1 (visibility.collectNodes contract).
@@ -222,5 +250,6 @@ module.exports = {
   simplifyPath,
   relevantPolygons,
   metresToDegrees,
-  DEFAULTS
+  DEFAULTS,
+  LIMITS
 }

@@ -62,3 +62,9 @@ test('sanitiseParams clamps and validates', () => {
   // maxViaPoints clamped to 500
   assert.ok(p.maxViaPoints <= 500)
 })
+
+test('runaway guard: continental-scale route span → 422 route-too-large', async () => {
+  const res = await handleRouteRequest({ points: [P(0, 0), P(3, 3)] })
+  assert.strictEqual(res.status, 422)
+  assert.strictEqual(res.body.error, 'route-too-large')
+})

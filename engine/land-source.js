@@ -32,6 +32,10 @@ const { LRUCache } = require('./cache')
 const TILE_EXTENT = 4096
 const DEFAULT_LAND_LAYER = 'LNDARE'
 
+// Cap the number of tiles read for one route bbox. A continental-scale request
+// ("around Europe") would otherwise try to read millions of tiles and hang.
+const MAX_TILES = 4096
+
 // Stitched-polygon cache keyed by `${file}|${mtimeMs}|${z}|${bboxQuant}`.
 const polygonCache = new LRUCache(24)
 
@@ -277,6 +281,16 @@ function readLandPolygons({ file, meta }, bbox, layerName) {
   const maxX = lon2tile(bbox[2], z)
   const minY = lat2tile(bbox[3], z) // north → smaller y
   const maxY = lat2tile(bbox[1], z)
+
+  const tileCount = (maxX - minX + 1) * (maxY - minY + 1)
+  if (tileCount > MAX_TILES) {
+    throw Object.assign(
+      new Error(
+        `route area too large: ${tileCount} tiles at z${z} (max ${MAX_TILES})`
+      ),
+      { reason: 'area-too-large' }
+    )
+  }
 
   const polygons = []
   let db

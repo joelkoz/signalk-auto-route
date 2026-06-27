@@ -138,3 +138,24 @@ test('single-point or empty input is returned safely', () => {
   const one = [P(0, 0)]
   assert.strictEqual(expandRoute(one, [island]).points.length, 1)
 })
+
+test('runaway guard: too-complex coastline is refused, not built (no freeze)', () => {
+  // 150 small obstacles straddling the route line. relevantPolygons keeps them
+  // all (~600 vertices > LIMITS.maxObstacleVertices), so detour() must throw a
+  // typed route-too-complex error instead of building the O(V^3) graph.
+  const polys = []
+  const s = 0.002
+  for (let k = 1; k <= 150; k++) {
+    const t = k / 152
+    polys.push([
+      [t - s, t - s],
+      [t + s, t - s],
+      [t + s, t + s],
+      [t - s, t + s]
+    ])
+  }
+  assert.throws(
+    () => expandRoute([P(0, 0), P(1, 1)], polys, { clearance: 50 }),
+    (err) => err.reason === 'route-too-complex'
+  )
+})
