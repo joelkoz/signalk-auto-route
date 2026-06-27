@@ -217,7 +217,10 @@ function decodeLandPolygonsFromTile(buf, z, x, y, layerName) {
   let Pbf
   try {
     VectorTile = require('@mapbox/vector-tile').VectorTile
-    Pbf = require('pbf')
+    // pbf v4 is ESM-only: require() yields the module namespace, so the Pbf
+    // constructor is the default export (.default), not the namespace itself.
+    const pbfModule = require('pbf')
+    Pbf = pbfModule.default || pbfModule
   } catch (err) {
     const e = new Error(
       'auto-route: @mapbox/vector-tile and pbf are required to read vector charts'
