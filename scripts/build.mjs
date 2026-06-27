@@ -11,7 +11,7 @@ const pub = join(root, 'public')
 mkdirSync(join(pub, 'js'), { recursive: true })
 
 await build({
-  entryPoints: [join(root, 'src/web/panel.js')],
+  entryPoints: [join(root, 'src/web/panel.ts')],
   bundle: true,
   format: 'iife',
   outdir: join(pub, 'js'),

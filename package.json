@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test \"test/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.web.json",
+    "test": "npm run typecheck && node --test \"test/**/*.test.js\"",
     "prepare": "node scripts/build.mjs"
   },
   "author": "Joel Kozikowski",
@@ -34,7 +35,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.27.0",
-    "signalk-plotterext-bus": "^0.5.0"
+    "signalk-plotterext-bus": "^0.6.0",
+    "typescript": "^5.9.3"
   },
   "signalk-plugin-enabled-by-default": false,
   "signalk": {

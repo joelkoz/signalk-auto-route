@@ -54,8 +54,13 @@ engine/          PURE, host-agnostic routing core (geometry in, geometry out).
   land-source.js The ONE engine file that touches the outside world: chart
                  discovery + MBTiles LNDARE extraction. Lazily loads the MVT
                  decode deps (@mapbox/vector-tile + pbf).
-src/web/         Panel browser source (plain JS + CSS) on
-                 signalk-plotterext-bus/extension.
+src/web/         Panel browser source — **TypeScript** (panel.ts) + CSS, typed
+                 against signalk-plotterext-bus/extension (the typed
+                 `client.route.*` API). This is the reference for the
+                 typed-extension best practice; the bus stays framework-neutral,
+                 so plain-JS extensions using the generic `client.call(...)` are
+                 equally supported. esbuild transpiles + bundles the TS; `tsc -p
+                 tsconfig.web.json` type-checks it (run by `npm test`).
 scripts/         build.mjs — esbuild bundles src/web → public/.
 public/          Built assets, committed. Served at
                  /plotterext/signalk-auto-route/. Generated — do not hand-edit.

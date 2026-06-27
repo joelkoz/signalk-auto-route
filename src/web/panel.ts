@@ -1,51 +1,92 @@
-// Auto Route panel.
+// Auto Route panel — reference TypeScript extension.
 //
 // Locks onto a live route edit buffer, lets the user set a clearance margin,
 // and on "Auto route" POSTs the route to the plugin's server-side engine, then
 // writes the land-avoiding result back to the buffer via route.replace. The
 // buffer is never changed on error — the user reviews the result and saves
 // themselves (this is a land-avoidance convenience, not a safety planner).
+//
+// This panel is written in TypeScript against the bus's typed extension API:
+// `client.route.*` gives compile-time-checked calls with no behavioural change
+// from the generic `client.call('route.…', …)` (a plain-JS extension would use
+// the latter). It is the reference for the typed-extension best practice; the
+// bus stays framework-neutral, so JavaScript extensions remain fully supported.
 
-import { connectExtension } from 'signalk-plotterext-bus/extension'
+import {
+  connectExtension,
+  ExtensionClient,
+  RouteData,
+  RoutePoint,
+  RpcError
+} from 'signalk-plotterext-bus/extension'
+
+interface RouteParams {
+  clearance: number
+  mode: 'fix-segments' | 'full'
+  simplify: boolean
+  maxViaPoints: number
+}
+
+/** Shape returned by POST /plotterext/signalk-auto-route/route. */
+interface RouteResponse {
+  changed?: boolean
+  points: RoutePoint[]
+}
+
+interface ErrorBody {
+  error?: string
+  message?: string
+}
 
 const ENDPOINT = '/plotterext/signalk-auto-route/route'
 const SAFETY_CAVEAT =
   'Avoids charted land only — not depth, shoals, rocks, or other hazards. ' +
   'Always review the route before navigating.'
 
-let client
-let lockedRouteId = null
-let lockedRoute = null // { routeId, name, rev, saved, points }
-let units = null
+let client: ExtensionClient
+let lockedRouteId: string | null = null
+let lockedRoute: RouteData | null = null
+let units: Record<string, string> | null = null
 
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
+function esc(s: unknown): string {
+  return String(s).replace(
+    /[&<>"]/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string
   )
 }
 
-function setStatus(text, kind = '') {
-  const el = document.getElementById('status')
+function byId<T extends HTMLElement = HTMLElement>(id: string): T {
+  return document.getElementById(id) as T
+}
+
+function setStatus(text: string, kind = ''): void {
+  const el = byId('status')
   el.textContent = text
   el.className = `status ${kind}`
 }
 
-function distanceUnit() {
+function distanceUnit(): 'ft' | 'm' {
   // Clearance is a small off-land margin; metres/feet are the sensible
   // choices. Honour the host's length preference when present.
-  const len = units && units.length
-  return len === 'foot' ? 'ft' : 'm'
+  return units && units.length === 'foot' ? 'ft' : 'm'
 }
 
-function clearanceToMetres(value) {
+function clearanceToMetres(value: number): number {
   return distanceUnit() === 'ft' ? value * 0.3048 : value
 }
 
-function renderRoute() {
-  const info = document.getElementById('routeInfo')
-  const btn = document.getElementById('autoRoute')
+/** Treat any thrown value as a possible RpcError and read its stable reason. */
+function reasonOf(err: unknown): string | undefined {
+  return err instanceof RpcError ? err.reason : undefined
+}
+
+function renderRoute(): void {
+  const info = byId('routeInfo')
+  const btn = byId<HTMLButtonElement>('autoRoute')
   if (!lockedRoute) {
-    info.textContent = 'Draw a route on the chart first, then reopen this panel.'
+    info.textContent =
+      'Draw a route on the chart first, then reopen this panel.'
     btn.disabled = true
     return
   }
@@ -57,28 +98,28 @@ function renderRoute() {
   btn.disabled = n < 2
 }
 
-async function refreshRoute() {
+async function refreshRoute(): Promise<void> {
   if (!lockedRouteId) return
   try {
-    lockedRoute = await client.call('route.get', { routeId: lockedRouteId })
+    lockedRoute = await client.route.get(lockedRouteId)
   } catch (err) {
-    if (err && err.data && err.data.reason === 'routes.unknownId') {
+    if (reasonOf(err) === 'routes.unknownId') {
       // Buffer vanished — drop the lock and re-pick.
       lockedRouteId = null
       lockedRoute = null
       await pickBuffer()
       return
     }
-    setStatus(`Could not read route: ${err.message}`, 'error')
+    setStatus(`Could not read route: ${(err as Error).message}`, 'error')
   }
   renderRoute()
 }
 
 // Lock onto a single buffer, or the most-recently-created when several exist.
-async function pickBuffer() {
+async function pickBuffer(): Promise<void> {
   try {
-    const { routes } = await client.call('route.list', {})
-    if (!routes || routes.length === 0) {
+    const routes = await client.route.list()
+    if (routes.length === 0) {
       lockedRouteId = null
       lockedRoute = null
       renderRoute()
@@ -91,17 +132,17 @@ async function pickBuffer() {
     lockedRouteId = chosen.routeId
     await refreshRoute()
   } catch (err) {
-    setStatus(`Could not list routes: ${err.message}`, 'error')
+    setStatus(`Could not list routes: ${(err as Error).message}`, 'error')
   }
 }
 
-async function autoRoute() {
+async function autoRoute(): Promise<void> {
   if (!lockedRoute || !lockedRoute.points || lockedRoute.points.length < 2) {
     return
   }
-  const btn = document.getElementById('autoRoute')
-  const rawClearance = Number(document.getElementById('clearance').value) || 0
-  const params = {
+  const btn = byId<HTMLButtonElement>('autoRoute')
+  const rawClearance = Number(byId<HTMLInputElement>('clearance').value) || 0
+  const params: RouteParams = {
     clearance: clearanceToMetres(rawClearance),
     mode: 'fix-segments',
     simplify: true,
@@ -119,7 +160,7 @@ async function autoRoute() {
     })
 
     if (resp.status === 422) {
-      const body = await resp.json().catch(() => ({}))
+      const body = (await resp.json().catch(() => ({}))) as ErrorBody
       if (body.error === 'land-source/none') {
         setStatus(
           'No land data for this area — install or enable a vector chart ' +
@@ -132,45 +173,49 @@ async function autoRoute() {
       return
     }
     if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}))
+      const body = (await resp.json().catch(() => ({}))) as ErrorBody
       setStatus(body.message || `Routing failed (${resp.status}).`, 'error')
       return
     }
 
-    const result = await resp.json()
+    const result = (await resp.json()) as RouteResponse
     if (!result.changed) {
-      setStatus('No land in the way — route already clear. Nothing changed.', 'ok')
+      setStatus(
+        'No land in the way — route already clear. Nothing changed.',
+        'ok'
+      )
       return
     }
 
-    await client.call('route.replace', {
-      routeId: lockedRouteId,
-      points: result.points
-    })
+    // Typed convenience wrapper — identical on the wire to
+    // client.call('route.replace', { routeId, points }).
+    await client.route.replace(lockedRouteId as string, result.points)
     const added = result.points.length - lockedRoute.points.length
     setStatus(
       `Route updated: ${added} via-point${added === 1 ? '' : 's'} added to ` +
         'avoid land. Review it on the chart, then save.',
       'ok'
     )
-    // refreshRoute will be triggered by the route.dirty event from replace,
-    // but refresh eagerly too for snappiness.
+    // refreshRoute will also be triggered by the route.dirty event from
+    // replace, but refresh eagerly too for snappiness.
     await refreshRoute()
   } catch (err) {
     // Buffer is never modified on a fetch/RPC failure.
-    setStatus(`Auto route failed: ${err.message}`, 'error')
+    setStatus(`Auto route failed: ${(err as Error).message}`, 'error')
   } finally {
     renderRoute()
   }
 }
 
-async function main() {
-  const root = document.getElementById('root')
+async function main(): Promise<void> {
+  const root = byId('root')
   client = await connectExtension()
 
-  if (client.hasCapability && client.hasCapability('units')) {
+  if (client.hasCapability('units')) {
     try {
-      const u = await client.call('units.get', {})
+      const u = (await client.call('units.get', {})) as {
+        units?: Record<string, string>
+      }
       units = u && u.units ? u.units : null
     } catch {
       units = null
@@ -192,30 +237,35 @@ async function main() {
     </div>
     <p class="status" id="status"></p>`
 
-  document.getElementById('autoRoute').addEventListener('click', autoRoute)
-  document.getElementById('refresh').addEventListener('click', pickBuffer)
+  byId('autoRoute').addEventListener('click', () => {
+    void autoRoute()
+  })
+  byId('refresh').addEventListener('click', () => {
+    void pickBuffer()
+  })
 
   // Follow route lifecycle: re-pick on create/delete, re-fetch on dirty.
   await client.subscribe(['route.**'], (name, params) => {
+    const p = params as { routeId?: string }
     if (name === 'route.created') {
       // Newly-created buffer becomes the most-recent candidate.
-      lockedRouteId = params.routeId
-      refreshRoute()
+      lockedRouteId = p.routeId ?? null
+      void refreshRoute()
     } else if (name === 'route.deleted') {
-      if (params.routeId === lockedRouteId) {
+      if (p.routeId === lockedRouteId) {
         lockedRouteId = null
         lockedRoute = null
-        pickBuffer()
+        void pickBuffer()
       }
     } else if (name === 'route.dirty') {
-      if (params.routeId === lockedRouteId) refreshRoute()
+      if (p.routeId === lockedRouteId) void refreshRoute()
     }
   })
 
   await pickBuffer()
 }
 
-main().catch((err) => {
+main().catch((err: Error) => {
   const root = document.getElementById('root')
   if (root) root.textContent = `Host connection failed: ${err.message}`
   console.warn('auto-route panel:', err)
