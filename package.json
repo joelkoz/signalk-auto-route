@@ -1,0 +1,57 @@
+{
+  "name": "signalk-auto-route",
+  "version": "0.0.1",
+  "description": "Land-avoidance auto-routing for Signal K chartplotters that support the plotterExtensions routes capability",
+  "main": "plugin/index.js",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-chart-plotters"
+  ],
+  "files": [
+    "plugin",
+    "engine",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/**/*.test.js\"",
+    "prepare": "node scripts/build.mjs"
+  },
+  "author": "Joel Kozikowski",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joelkoz/signalk-auto-route.git"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "^2.0.3",
+    "pbf": "^4.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "signalk-plotterext-bus": "^0.5.0"
+  },
+  "signalk-plugin-enabled-by-default": false,
+  "signalk": {
+    "appIcon": "assets/auto-route.png",
+    "displayName": "Auto Route",
+    "appSupport": "none",
+    "recommends": [
+      "signalk-charts-provider-simple"
+    ],
+    "screenshots": [],
+    "appstore": {
+      "displayName": "Auto Route",
+      "categories": [
+        "chart-plotters"
+      ],
+      "author": "Joel Kozikowski",
+      "description": "Land-avoidance auto-routing for Signal K chartplotters that support the plotterExtensions routes capability. Routes around charted land between the points of a route; not a navigation-safety planner."
+    }
+  }
+}
