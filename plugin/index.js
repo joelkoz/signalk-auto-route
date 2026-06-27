@@ -74,11 +74,10 @@ module.exports = (app) => {
   }
 
   // Land-source options resolved live at request time from plugin config +
-  // the server's chart directory.
+  // the server's chart directories.
   const landSourceOptions = () => {
-    const chartDir = resolveChartDir(app, options)
     return {
-      chartDir,
+      chartDirs: chartDirCandidates(app, options),
       extraPaths: options.extraChartPaths || [],
       layerName: options.landLayer || DEFAULT_LAND_LAYER,
       padDeg:
@@ -197,21 +196,34 @@ module.exports = (app) => {
   }
 }
 
-// Resolve the chart directory: explicit plugin config wins; otherwise fall
-// back to the Signal K data directory's conventional charts folder. Kept
-// defensive so a missing app.config can never throw at start.
-function resolveChartDir(app, options) {
+// Candidate chart directories to scan for .mbtiles, most-specific first:
+//   1. an explicit chartPath plugin-config override (if set),
+//   2. for each known server base path, both `charts` and `charts-simple`
+//      (and a `../charts-simple` sibling) — different chart providers use
+//      different folder names; charts-provider-simple writes to charts-simple.
+// Kept defensive so a missing app.config can never throw at start.
+function chartDirCandidates(app, options) {
+  const dirs = []
   if (options && typeof options.chartPath === 'string' && options.chartPath) {
-    return options.chartPath
+    dirs.push(options.chartPath)
   }
+  const bases = []
   try {
-    const base =
-      (app.config && (app.config.configPath || app.config.appPath)) || null
-    if (base) return path.join(base, 'charts')
+    if (app && app.config) {
+      if (app.config.configPath) bases.push(app.config.configPath)
+      if (app.config.appPath && app.config.appPath !== app.config.configPath) {
+        bases.push(app.config.appPath)
+      }
+    }
   } catch {
     /* ignore */
   }
-  return undefined
+  for (const base of bases) {
+    dirs.push(path.join(base, 'charts'))
+    dirs.push(path.join(base, 'charts-simple'))
+    dirs.push(path.join(base, '..', 'charts-simple'))
+  }
+  return dirs
 }
 
 module.exports.PLUGIN_ID = PLUGIN_ID

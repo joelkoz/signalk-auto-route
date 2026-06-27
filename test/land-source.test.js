@@ -34,3 +34,24 @@ test('discoverCharts returns empty for a non-existent directory', () => {
   const files = discoverCharts({ chartDir: '/no/such/dir', extraPaths: [] })
   assert.deepStrictEqual(files, [])
 })
+
+test('discoverCharts scans every candidate dir in chartDirs', () => {
+  const fs = require('node:fs')
+  const os = require('node:os')
+  const path = require('node:path')
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'autoroute-charts-'))
+  const simple = path.join(base, 'charts-simple')
+  fs.mkdirSync(simple)
+  const file = path.join(simple, 'FL-Keys.mbtiles')
+  fs.writeFileSync(file, 'x')
+  try {
+    // The plugin passes several candidates; only `charts-simple` has the file.
+    const found = discoverCharts({
+      chartDirs: [path.join(base, 'charts'), simple],
+      extraPaths: []
+    })
+    assert.deepStrictEqual(found, [file])
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true })
+  }
+})

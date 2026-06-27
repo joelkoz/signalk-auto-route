@@ -134,13 +134,17 @@ function tileLocalToLonLat(px, py, z, x, y) {
  *   2. Otherwise (or in addition) scan `chartDir` for *.mbtiles.
  * Returns an array of absolute file paths (deduplicated).
  */
-function discoverCharts({ chartDir, extraPaths } = {}) {
+function discoverCharts({ chartDir, chartDirs, extraPaths } = {}) {
   const found = new Set()
   for (const p of extraPaths || []) {
     if (p && fs.existsSync(p)) found.add(path.resolve(p))
   }
-  if (chartDir && fs.existsSync(chartDir)) {
-    walkForMbtiles(chartDir, found)
+  // Accept either a single chartDir or a list of candidate dirs (the plugin
+  // passes several, since chart providers use different folder names, e.g.
+  // charts-provider-simple writes to `charts-simple`).
+  const dirs = [...(chartDirs || []), chartDir].filter(Boolean)
+  for (const dir of dirs) {
+    if (fs.existsSync(dir)) walkForMbtiles(dir, found)
   }
   return [...found]
 }
