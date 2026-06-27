@@ -136,3 +136,21 @@ route across a charted landmass and press Auto route.
 - **`ring offset` is a bisector approximation**, not a true Minkowski buffer;
   fine for the modest clearances used, can self-intersect at sharp concave
   corners for large offsets.
+- **Chart discovery is a directory scan, not provider-agnostic.** `land-source.js`
+  reads `.mbtiles` from disk; the plugin derives the chart folder as
+  `dirname(dirname(getDataDirPath()))/charts-simple` (matching
+  charts-provider-simple's default) plus a `chartPath` override. This is
+  zero-config for charts-provider-simple but won't find charts served by other
+  providers in other folders. Investigated alternatives for a provider-agnostic
+  zero-config path (2026-06):
+  - **HTTP tiles over localhost** (`/signalk/v2/api/resources/charts/:id/:z/:x/:y`)
+    — blocked: the resources API requires auth (HTTP 401) unless the server has
+    `allow_readonly`; plugins aren't handed a token or `securityStrategy`.
+  - **`app.resourcesApi.listResources('charts')`** (in-process, no auth) — returns
+    chart metadata but charts-provider-simple `sanitizeProvider()`s away the
+    `_filePath`, so no direct read path.
+  - **Best future option:** have charts-provider-simple expose an in-process API
+    via `globalThis` (the pattern signalk-container uses for
+    `__signalk_containerManager`) returning vector-chart `.mbtiles` paths; the
+    auto-router consumes it with a graceful fallback to the dir scan. Requires a
+    change to charts-provider-simple. Deferred.
