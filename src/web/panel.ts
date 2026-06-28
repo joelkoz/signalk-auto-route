@@ -58,6 +58,9 @@ let client: ExtensionClient
 let visibleRoutes: RouteSummary[] = []
 let selectedRouteId: string | null = null
 let selectedRoute: RouteData | null = null
+// Whether the current selection was resolved automatically (exactly one route
+// visible). With two or more visible, the user must choose explicitly.
+let autoSelected = false
 let units: Record<string, string> | null = null
 
 function esc(s: unknown): string {
@@ -125,9 +128,34 @@ function patchVisible(routeId: string, patch: Partial<RouteSummary>): void {
   if (r) Object.assign(r, patch)
 }
 
-/** Rebuild the dropdown from the mirror, preserving the current selection. */
+/** Decide the working route from the visible set: with exactly one route the
+ *  panel resolves it automatically; with two or more the user must choose, so a
+ *  stale or auto-selection drops back to the placeholder; with none, nothing. */
+function reconcileSelection(): void {
+  if (visibleRoutes.length === 1) {
+    selectedRouteId = visibleRoutes[0].routeId
+    autoSelected = true
+  } else if (visibleRoutes.length === 0) {
+    selectedRouteId = null
+    autoSelected = false
+  } else {
+    if (
+      autoSelected ||
+      !selectedRouteId ||
+      !visibleRoutes.some((r) => r.routeId === selectedRouteId)
+    ) {
+      selectedRouteId = null
+    }
+    autoSelected = false
+  }
+}
+
+/** Rebuild the dropdown from the mirror and reflect the current selection. The
+ *  dropdown is only shown for two or more routes (forced choice); with one or
+ *  none it is hidden and the panel resolves the route itself. */
 function renderOptions(): void {
   const sel = byId<HTMLSelectElement>('routeSelect')
+  byId('routeRow').style.display = visibleRoutes.length >= 2 ? '' : 'none'
   const opts = [`<option value="">${esc(PLACEHOLDER)}</option>`]
   for (const r of visibleRoutes) {
     opts.push(
@@ -135,17 +163,14 @@ function renderOptions(): void {
     )
   }
   sel.innerHTML = opts.join('')
-  if (
-    selectedRouteId &&
-    visibleRoutes.some((r) => r.routeId === selectedRouteId)
-  ) {
-    sel.value = selectedRouteId
-  } else {
-    // The selection is gone (hidden/deleted) — fall back to the placeholder.
-    sel.value = ''
-    selectedRouteId = null
-    selectedRoute = null
-  }
+  sel.value = selectedRouteId ?? ''
+}
+
+/** Re-resolve the selection and re-render after the visible set changes. */
+function syncUi(): void {
+  reconcileSelection()
+  renderOptions()
+  void refreshSelected()
 }
 
 function renderInfo(): void {
@@ -196,12 +221,14 @@ async function refreshList(): Promise<void> {
     setStatus(`Could not list routes: ${(err as Error).message}`, 'error')
     return
   }
+  reconcileSelection()
   renderOptions()
   await refreshSelected()
 }
 
 function onSelectChange(): void {
   selectedRouteId = byId<HTMLSelectElement>('routeSelect').value || null
+  autoSelected = false
   selectedRoute = null
   setStatus('')
   void refreshSelected()
@@ -210,6 +237,10 @@ function onSelectChange(): void {
 // ---- actions ----------------------------------------------------------------
 
 async function autoRoute(): Promise<void> {
+  if (visibleRoutes.length === 0) {
+    setStatus('Draw or show a route on the chart first.', 'warn')
+    return
+  }
   if (!selectedRouteId) {
     setStatus('Select the route to work with.', 'warn')
     return
@@ -332,7 +363,7 @@ async function main(): Promise<void> {
 
   root.innerHTML = `
     <p class="caveat">${esc(SAFETY_CAVEAT)}</p>
-    <label class="row"><span>Route</span>
+    <label class="row" id="routeRow"><span>Route</span>
       <select id="routeSelect"></select></label>
     <div id="routeInfo" class="route-info"></div>
     <label class="row"><span>Clearance (${unit})</span>
@@ -362,17 +393,15 @@ async function main(): Promise<void> {
   await client.subscribe(['route.**'], (name, params) => {
     if (name === 'route.visible') {
       upsertVisible(params as RouteVisibleEvent)
-      renderOptions()
-      renderInfo()
+      syncUi()
     } else if (name === 'route.hidden') {
       const e = params as RouteHiddenEvent
       const wasSelected = e.routeId === selectedRouteId
       visibleRoutes = visibleRoutes.filter((r) => r.routeId !== e.routeId)
-      renderOptions()
-      if (wasSelected) {
+      syncUi()
+      if (wasSelected && !selectedRouteId) {
         setStatus('The selected route is no longer visible.')
       }
-      renderInfo()
     } else if (name === 'route.saved') {
       const e = params as RouteSavedEvent
       // Carry the (possibly dialog-set) name so the label updates, e.g. an
@@ -382,13 +411,11 @@ async function main(): Promise<void> {
         saved: e.saved,
         dirty: e.dirty
       })
-      renderOptions()
-      if (e.routeId === selectedRouteId) void refreshSelected()
+      syncUi()
     } else if (name === 'route.dirty') {
       const e = params as RouteDirtyEvent
       patchVisible(e.routeId, { dirty: true })
-      renderOptions()
-      if (e.routeId === selectedRouteId) void refreshSelected()
+      syncUi()
     }
   })
 
