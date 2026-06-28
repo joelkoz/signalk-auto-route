@@ -84,6 +84,7 @@ function reasonOf(err: unknown): string | undefined {
 function renderRoute(): void {
   const info = byId('routeInfo')
   const btn = byId<HTMLButtonElement>('autoRoute')
+  byId<HTMLButtonElement>('saveRoute').disabled = !lockedRoute
   if (!lockedRoute) {
     info.textContent =
       'Draw a route on the chart first, then reopen this panel.'
@@ -207,6 +208,26 @@ async function autoRoute(): Promise<void> {
   }
 }
 
+// Persist the locked buffer to a stored route. The host owns the naming UX
+// (it opens its route-details dialog); on save the buffer becomes a saved
+// route and this panel's lock is released by the route.deleted event.
+async function saveRoute(): Promise<void> {
+  if (!lockedRouteId) {
+    return
+  }
+  setStatus('Saving route…')
+  try {
+    const { href } = await client.route.save(lockedRouteId)
+    setStatus(`Route saved (${esc(href)}).`, 'ok')
+  } catch (err) {
+    if (reasonOf(err) === 'routes.saveCancelled') {
+      setStatus('Save cancelled — route is still unsaved.')
+    } else {
+      setStatus(`Save failed: ${(err as Error).message}`, 'error')
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const root = byId('root')
   client = await connectExtension()
@@ -233,12 +254,16 @@ async function main(): Promise<void> {
              value="${defaultClearance}"></label>
     <div class="actions">
       <button type="button" id="refresh">Refresh</button>
+      <button type="button" id="saveRoute">Save</button>
       <button type="button" id="autoRoute" class="primary">Auto route</button>
     </div>
     <p class="status" id="status"></p>`
 
   byId('autoRoute').addEventListener('click', () => {
     void autoRoute()
+  })
+  byId('saveRoute').addEventListener('click', () => {
+    void saveRoute()
   })
   byId('refresh').addEventListener('click', () => {
     void pickBuffer()
