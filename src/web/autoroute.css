@@ -58,7 +58,8 @@ body.panel #root {
   font-size: 13px;
   color: #9fb3c4;
 }
-input {
+input,
+select {
   flex: 1;
   padding: 6px 8px;
   border-radius: 6px;

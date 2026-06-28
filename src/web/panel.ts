@@ -1,22 +1,29 @@
 // Auto Route panel — reference TypeScript extension.
 //
-// Locks onto a live route edit buffer, lets the user set a clearance margin,
-// and on "Auto route" POSTs the route to the plugin's server-side engine, then
-// writes the land-avoiding result back to the buffer via route.replace. The
-// buffer is never changed on error — the user reviews the result and saves
-// themselves (this is a land-avoidance convenience, not a safety planner).
+// Lists the routes currently visible on the chart in a dropdown and lets the
+// user pick one to auto-route. The dropdown is kept in sync by *listening for
+// route.visible / route.hidden events* — this panel doubles as the reference
+// for how an extension follows the host's visible-route set. On "Auto route" it
+// POSTs the chosen route to the plugin's server-side engine and writes the
+// land-avoiding result back via route.replace. The route is never changed on
+// error — the user reviews and saves it themselves (this is a land-avoidance
+// convenience, not a safety planner).
 //
-// This panel is written in TypeScript against the bus's typed extension API:
-// `client.route.*` gives compile-time-checked calls with no behavioural change
-// from the generic `client.call('route.…', …)` (a plain-JS extension would use
-// the latter). It is the reference for the typed-extension best practice; the
-// bus stays framework-neutral, so JavaScript extensions remain fully supported.
+// Written in TypeScript against the bus's typed extension API (client.route.*
+// and the typed event payloads); a plain-JS extension would use the generic
+// client.call('route.…', …) and read params untyped. The bus stays
+// framework-neutral, so JavaScript extensions remain fully supported.
 
 import {
   connectExtension,
   ExtensionClient,
   RouteData,
+  RouteDirtyEvent,
+  RouteHiddenEvent,
   RoutePoint,
+  RouteSavedEvent,
+  RouteSummary,
+  RouteVisibleEvent,
   RpcError
 } from 'signalk-plotterext-bus/extension'
 
@@ -42,10 +49,15 @@ const ENDPOINT = '/plotterext/signalk-auto-route/route'
 const SAFETY_CAVEAT =
   'Avoids charted land only — not depth, shoals, rocks, or other hazards. ' +
   'Always review the route before navigating.'
+const PLACEHOLDER = '-- Select a route --'
 
 let client: ExtensionClient
-let lockedRouteId: string | null = null
-let lockedRoute: RouteData | null = null
+// The routes currently visible on the chart, kept in sync from route.visible /
+// route.hidden (seeded once from route.list). This is the panel's mirror of the
+// host's visible set.
+let visibleRoutes: RouteSummary[] = []
+let selectedRouteId: string | null = null
+let selectedRoute: RouteData | null = null
 let units: Record<string, string> | null = null
 
 function esc(s: unknown): string {
@@ -81,66 +93,138 @@ function reasonOf(err: unknown): string | undefined {
   return err instanceof RpcError ? err.reason : undefined
 }
 
-function renderRoute(): void {
-  const info = byId('routeInfo')
-  const btn = byId<HTMLButtonElement>('autoRoute')
-  byId<HTMLButtonElement>('saveRoute').disabled = !lockedRoute
-  if (!lockedRoute) {
-    info.textContent =
-      'Draw a route on the chart first, then reopen this panel.'
-    btn.disabled = true
-    return
-  }
-  const n = lockedRoute.points ? lockedRoute.points.length : 0
-  info.innerHTML =
-    `<strong>${esc(lockedRoute.name || 'Route')}</strong>` +
-    ` <span class="muted">· ${n} point${n === 1 ? '' : 's'}` +
-    `${lockedRoute.saved && !lockedRoute.dirty ? '' : ' · unsaved'}</span>`
-  btn.disabled = n < 2
+// ---- visible-route list (the dropdown) --------------------------------------
+
+/** Dropdown label: name + an "unsaved" marker (a route with no resource yet, or
+ *  with pending edits). Point counts live in the detail line, not here, so the
+ *  label never goes stale. */
+function optionLabel(r: RouteSummary): string {
+  const name = r.name || 'Unnamed route'
+  const unsaved = !r.saved || r.dirty
+  return `${name}${unsaved ? ' · unsaved' : ''}`
 }
 
-async function refreshRoute(): Promise<void> {
-  if (!lockedRouteId) return
+/** Insert or update a route in the local mirror. */
+function upsertVisible(ev: RouteVisibleEvent): void {
+  const entry: RouteSummary = {
+    routeId: ev.routeId,
+    name: ev.name,
+    rev: ev.rev,
+    pointCount: ev.pointCount,
+    saved: ev.saved,
+    dirty: ev.dirty
+  }
+  const i = visibleRoutes.findIndex((r) => r.routeId === ev.routeId)
+  if (i >= 0) visibleRoutes[i] = entry
+  else visibleRoutes.push(entry)
+}
+
+/** Patch a mirrored route's flags in place (used on dirty/saved). */
+function patchVisible(routeId: string, patch: Partial<RouteSummary>): void {
+  const r = visibleRoutes.find((x) => x.routeId === routeId)
+  if (r) Object.assign(r, patch)
+}
+
+/** Rebuild the dropdown from the mirror, preserving the current selection. */
+function renderOptions(): void {
+  const sel = byId<HTMLSelectElement>('routeSelect')
+  const opts = [`<option value="">${esc(PLACEHOLDER)}</option>`]
+  for (const r of visibleRoutes) {
+    opts.push(
+      `<option value="${esc(r.routeId)}">${esc(optionLabel(r))}</option>`
+    )
+  }
+  sel.innerHTML = opts.join('')
+  if (
+    selectedRouteId &&
+    visibleRoutes.some((r) => r.routeId === selectedRouteId)
+  ) {
+    sel.value = selectedRouteId
+  } else {
+    // The selection is gone (hidden/deleted) — fall back to the placeholder.
+    sel.value = ''
+    selectedRouteId = null
+    selectedRoute = null
+  }
+}
+
+function renderInfo(): void {
+  const info = byId('routeInfo')
+  const save = byId<HTMLButtonElement>('saveRoute')
+  if (!selectedRoute) {
+    info.textContent = visibleRoutes.length
+      ? 'Select a route above to auto-route it.'
+      : 'No routes on the chart yet — draw one or show a saved route.'
+    save.disabled = true
+    return
+  }
+  const n = selectedRoute.points ? selectedRoute.points.length : 0
+  const unsaved = !selectedRoute.saved || selectedRoute.dirty
+  info.innerHTML =
+    `<strong>${esc(selectedRoute.name || 'Unnamed route')}</strong>` +
+    ` <span class="muted">· ${n} point${n === 1 ? '' : 's'}${
+      unsaved ? ' · unsaved' : ''
+    }</span>`
+  save.disabled = !unsaved
+}
+
+/** Fetch the selected route's geometry for the detail line + auto-routing. */
+async function refreshSelected(): Promise<void> {
+  if (!selectedRouteId) {
+    selectedRoute = null
+    renderInfo()
+    return
+  }
   try {
-    lockedRoute = await client.route.get(lockedRouteId)
+    selectedRoute = await client.route.get(selectedRouteId)
   } catch (err) {
     if (reasonOf(err) === 'routes.unknownId') {
-      // Buffer vanished — drop the lock and re-pick.
-      lockedRouteId = null
-      lockedRoute = null
-      await pickBuffer()
-      return
+      selectedRouteId = null
+      selectedRoute = null
+    } else {
+      setStatus(`Could not read route: ${(err as Error).message}`, 'error')
     }
-    setStatus(`Could not read route: ${(err as Error).message}`, 'error')
   }
-  renderRoute()
+  renderInfo()
 }
 
-// Lock onto a single buffer, or the most-recently-created when several exist.
-async function pickBuffer(): Promise<void> {
+/** Seed/refresh the whole list from the host (initial load + Refresh button). */
+async function refreshList(): Promise<void> {
   try {
-    const routes = await client.route.list()
-    if (routes.length === 0) {
-      lockedRouteId = null
-      lockedRoute = null
-      renderRoute()
-      return
-    }
-    // Prefer the currently locked one if still present; else the last listed
-    // (the host appends newly-created buffers, so last ≈ most recent).
-    const stillThere = routes.find((r) => r.routeId === lockedRouteId)
-    const chosen = stillThere || routes[routes.length - 1]
-    lockedRouteId = chosen.routeId
-    await refreshRoute()
+    visibleRoutes = await client.route.list()
   } catch (err) {
     setStatus(`Could not list routes: ${(err as Error).message}`, 'error')
-  }
-}
-
-async function autoRoute(): Promise<void> {
-  if (!lockedRoute || !lockedRoute.points || lockedRoute.points.length < 2) {
     return
   }
+  renderOptions()
+  await refreshSelected()
+}
+
+function onSelectChange(): void {
+  selectedRouteId = byId<HTMLSelectElement>('routeSelect').value || null
+  selectedRoute = null
+  setStatus('')
+  void refreshSelected()
+}
+
+// ---- actions ----------------------------------------------------------------
+
+async function autoRoute(): Promise<void> {
+  if (!selectedRouteId) {
+    setStatus('Select the route to work with.', 'warn')
+    return
+  }
+  // Make sure we are working with the current geometry.
+  await refreshSelected()
+  if (
+    !selectedRoute ||
+    !selectedRoute.points ||
+    selectedRoute.points.length < 2
+  ) {
+    setStatus('The selected route needs at least two points.', 'warn')
+    return
+  }
+
   const btn = byId<HTMLButtonElement>('autoRoute')
   const rawClearance = Number(byId<HTMLInputElement>('clearance').value) || 0
   const params: RouteParams = {
@@ -157,7 +241,7 @@ async function autoRoute(): Promise<void> {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ points: lockedRoute.points, params })
+      body: JSON.stringify({ points: selectedRoute.points, params })
     })
 
     if (resp.status === 422) {
@@ -190,36 +274,34 @@ async function autoRoute(): Promise<void> {
 
     // Typed convenience wrapper — identical on the wire to
     // client.call('route.replace', { routeId, points }).
-    await client.route.replace(lockedRouteId as string, result.points)
-    const added = result.points.length - lockedRoute.points.length
+    await client.route.replace(selectedRouteId, result.points)
+    const added = result.points.length - selectedRoute.points.length
     setStatus(
       `Route updated: ${added} via-point${added === 1 ? '' : 's'} added to ` +
         'avoid land. Review it on the chart, then save.',
       'ok'
     )
-    // refreshRoute will also be triggered by the route.dirty event from
-    // replace, but refresh eagerly too for snappiness.
-    await refreshRoute()
+    // route.replace emits route.dirty, which refreshes us, but update eagerly.
+    await refreshSelected()
   } catch (err) {
-    // Buffer is never modified on a fetch/RPC failure.
+    // The route is never modified on a fetch/RPC failure.
     setStatus(`Auto route failed: ${(err as Error).message}`, 'error')
   } finally {
-    renderRoute()
+    byId<HTMLButtonElement>('autoRoute').disabled = false
   }
 }
 
-// Persist the locked route. The host owns the naming UX (dialog:true opens its
-// route-details dialog); on save the route stays locked and visible, now saved
-// and clean (route.saved), so the panel keeps operating on the same routeId.
+// Persist the selected route. The host owns the naming UX (dialog:true opens its
+// route-details dialog); on save the route stays visible/selected, now saved and
+// clean (route.saved), so the panel keeps operating on the same routeId.
 async function saveRoute(): Promise<void> {
-  if (!lockedRouteId) {
+  if (!selectedRouteId) {
+    setStatus('Select a route to save.', 'warn')
     return
   }
   setStatus('Saving route…')
   try {
-    // dialog: true — let the host prompt for a name/description (the draft is
-    // unnamed). Omit it for a headless save with a name you already have.
-    const { href } = await client.route.save(lockedRouteId, { dialog: true })
+    const { href } = await client.route.save(selectedRouteId, { dialog: true })
     setStatus(`Route saved (${esc(href)}).`, 'ok')
   } catch (err) {
     if (reasonOf(err) === 'routes.saveCancelled') {
@@ -250,6 +332,8 @@ async function main(): Promise<void> {
 
   root.innerHTML = `
     <p class="caveat">${esc(SAFETY_CAVEAT)}</p>
+    <label class="row"><span>Route</span>
+      <select id="routeSelect"></select></label>
     <div id="routeInfo" class="route-info"></div>
     <label class="row"><span>Clearance (${unit})</span>
       <input id="clearance" type="number" min="0" max="100000"
@@ -261,6 +345,7 @@ async function main(): Promise<void> {
     </div>
     <p class="status" id="status"></p>`
 
+  byId('routeSelect').addEventListener('change', onSelectChange)
   byId('autoRoute').addEventListener('click', () => {
     void autoRoute()
   })
@@ -268,29 +353,40 @@ async function main(): Promise<void> {
     void saveRoute()
   })
   byId('refresh').addEventListener('click', () => {
-    void pickBuffer()
+    void refreshList()
   })
 
-  // Follow route lifecycle: lock onto a newly-visible route, re-pick when the
-  // locked one is hidden, re-fetch on dirty/saved (the saved flag may change).
+  // Keep the dropdown in sync with the host's visible route set. route.visible /
+  // route.hidden add and remove entries; route.dirty / route.saved update an
+  // entry's flags (and the detail line, if it is the selected route).
   await client.subscribe(['route.**'], (name, params) => {
-    const p = params as { routeId?: string }
     if (name === 'route.visible') {
-      // Newly-visible route becomes the most-recent candidate.
-      lockedRouteId = p.routeId ?? null
-      void refreshRoute()
+      upsertVisible(params as RouteVisibleEvent)
+      renderOptions()
+      renderInfo()
     } else if (name === 'route.hidden') {
-      if (p.routeId === lockedRouteId) {
-        lockedRouteId = null
-        lockedRoute = null
-        void pickBuffer()
+      const e = params as RouteHiddenEvent
+      const wasSelected = e.routeId === selectedRouteId
+      visibleRoutes = visibleRoutes.filter((r) => r.routeId !== e.routeId)
+      renderOptions()
+      if (wasSelected) {
+        setStatus('The selected route is no longer visible.')
       }
-    } else if (name === 'route.dirty' || name === 'route.saved') {
-      if (p.routeId === lockedRouteId) void refreshRoute()
+      renderInfo()
+    } else if (name === 'route.saved') {
+      const e = params as RouteSavedEvent
+      patchVisible(e.routeId, { saved: e.saved, dirty: e.dirty })
+      renderOptions()
+      if (e.routeId === selectedRouteId) void refreshSelected()
+    } else if (name === 'route.dirty') {
+      const e = params as RouteDirtyEvent
+      patchVisible(e.routeId, { dirty: true })
+      renderOptions()
+      if (e.routeId === selectedRouteId) void refreshSelected()
     }
   })
 
-  await pickBuffer()
+  await refreshList()
 }
 
 main().catch((err: Error) => {
