@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.27.0",
-    "signalk-plotterext-bus": "^0.6.1",
+    "signalk-plotterext-bus": "^0.7.0",
     "typescript": "^5.9.3"
   },
   "signalk-plugin-enabled-by-default": false,

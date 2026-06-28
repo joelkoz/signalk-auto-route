@@ -95,7 +95,7 @@ function renderRoute(): void {
   info.innerHTML =
     `<strong>${esc(lockedRoute.name || 'Route')}</strong>` +
     ` <span class="muted">· ${n} point${n === 1 ? '' : 's'}` +
-    `${lockedRoute.saved ? '' : ' · unsaved'}</span>`
+    `${lockedRoute.saved && !lockedRoute.dirty ? '' : ' · unsaved'}</span>`
   btn.disabled = n < 2
 }
 
@@ -208,9 +208,9 @@ async function autoRoute(): Promise<void> {
   }
 }
 
-// Persist the locked buffer to a stored route. The host owns the naming UX
-// (it opens its route-details dialog); on save the buffer becomes a saved
-// route and this panel's lock is released by the route.deleted event.
+// Persist the locked route. The host owns the naming UX (dialog:true opens its
+// route-details dialog); on save the route stays locked and visible, now saved
+// and clean (route.saved), so the panel keeps operating on the same routeId.
 async function saveRoute(): Promise<void> {
   if (!lockedRouteId) {
     return
@@ -271,20 +271,21 @@ async function main(): Promise<void> {
     void pickBuffer()
   })
 
-  // Follow route lifecycle: re-pick on create/delete, re-fetch on dirty.
+  // Follow route lifecycle: lock onto a newly-visible route, re-pick when the
+  // locked one is hidden, re-fetch on dirty/saved (the saved flag may change).
   await client.subscribe(['route.**'], (name, params) => {
     const p = params as { routeId?: string }
-    if (name === 'route.created') {
-      // Newly-created buffer becomes the most-recent candidate.
+    if (name === 'route.visible') {
+      // Newly-visible route becomes the most-recent candidate.
       lockedRouteId = p.routeId ?? null
       void refreshRoute()
-    } else if (name === 'route.deleted') {
+    } else if (name === 'route.hidden') {
       if (p.routeId === lockedRouteId) {
         lockedRouteId = null
         lockedRoute = null
         void pickBuffer()
       }
-    } else if (name === 'route.dirty') {
+    } else if (name === 'route.dirty' || name === 'route.saved') {
       if (p.routeId === lockedRouteId) void refreshRoute()
     }
   })
