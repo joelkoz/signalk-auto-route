@@ -375,7 +375,13 @@ async function main(): Promise<void> {
       renderInfo()
     } else if (name === 'route.saved') {
       const e = params as RouteSavedEvent
-      patchVisible(e.routeId, { saved: e.saved, dirty: e.dirty })
+      // Carry the (possibly dialog-set) name so the label updates, e.g. an
+      // unnamed draft that the user just saved as "rt1".
+      patchVisible(e.routeId, {
+        name: e.name,
+        saved: e.saved,
+        dirty: e.dirty
+      })
       renderOptions()
       if (e.routeId === selectedRouteId) void refreshSelected()
     } else if (name === 'route.dirty') {
