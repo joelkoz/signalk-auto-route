@@ -217,7 +217,9 @@ async function saveRoute(): Promise<void> {
   }
   setStatus('Saving route…')
   try {
-    const { href } = await client.route.save(lockedRouteId)
+    // dialog: true — let the host prompt for a name/description (the draft is
+    // unnamed). Omit it for a headless save with a name you already have.
+    const { href } = await client.route.save(lockedRouteId, { dialog: true })
     setStatus(`Route saved (${esc(href)}).`, 'ok')
   } catch (err) {
     if (reasonOf(err) === 'routes.saveCancelled') {
