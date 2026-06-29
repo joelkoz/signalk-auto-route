@@ -98,8 +98,8 @@ v1.
 
 ### 2.3 Buffer selection (v1 decision)
 
-**Lock onto the single buffer; when several exist, the most-recently-created
-(tracked via `route.created`, falling back to the last entry of `route.list`).
+**Lock onto the single buffer; when several exist, the most-recent (tracked via
+the latest `route.visible`, falling back to the last entry of `route.list`).
 Zero buffers ⇒ prompt the user to draw a route first.** No explicit picker in
 v1 — this keeps the panel simple. (An explicit picker is a possible later
 enhancement if multi-buffer hosts make the implicit choice surprising.)
@@ -167,6 +167,8 @@ Responses:
 - `400 { error: 'bad-request', message }` — malformed / < 2 points / bad
   position.
 - `422 { error: 'land-source/none', message }` — no covering vector chart.
+- `422 { error: 'route-too-large', message }` — route bbox span exceeds the
+  runaway guard (continental-scale request).
 - `500 { error: 'internal', message }` — unexpected; the server never crashes.
 
 The transport-agnostic core (`handleRouteRequest`) never throws.

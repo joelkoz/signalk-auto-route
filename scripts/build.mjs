@@ -22,9 +22,11 @@ await build({
 
 cpSync(join(root, 'src/web/autoroute.css'), join(pub, 'autoroute.css'))
 
-// Static assets (e.g. the app-store icon) ship under public/assets/ so the
-// server's icon probe resolves signalk.appIcon ("assets/...") via the
-// published tarball's public/ directory.
+// Copy static assets (e.g. the app icon) into public/ so the panel can serve
+// them. The icon's committed source — src/web/assets/auto-route.png — is also
+// the declared signalk.appIcon (whitelisted in package.json "files"), so the
+// App Store resolves it from a fresh checkout / the tarball without depending
+// on this gitignored build output.
 const assetsSrc = join(root, 'src/web/assets')
 if (existsSync(assetsSrc)) {
   cpSync(assetsSrc, join(pub, 'assets'), { recursive: true })

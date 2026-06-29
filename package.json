@@ -11,6 +11,7 @@
     "plugin",
     "engine",
     "public",
+    "src/web/assets/auto-route.png",
     "README.md",
     "LICENSE"
   ],
@@ -41,7 +42,7 @@
   },
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "public/assets/auto-route.png",
+    "appIcon": "src/web/assets/auto-route.png",
     "displayName": "Auto Route",
     "appSupport": "none",
     "recommends": [

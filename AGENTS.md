@@ -62,8 +62,10 @@ src/web/         Panel browser source — **TypeScript** (panel.ts) + CSS, typed
                  equally supported. esbuild transpiles + bundles the TS; `tsc -p
                  tsconfig.web.json` type-checks it (run by `npm test`).
 scripts/         build.mjs — esbuild bundles src/web → public/.
-public/          Built assets, committed. Served at
-                 /plotterext/signalk-auto-route/. Generated — do not hand-edit.
+public/          Build output (gitignored). Generated from src/web/ by
+                 build.mjs and served at /plotterext/signalk-auto-route/. NOT a
+                 source artifact — do not hand-edit or commit; the prepare
+                 script rebuilds it on publish.
 test/            node --test suites (engine core, cache, endpoint, manifest,
                  land-source pure helpers).
 ```
@@ -117,6 +119,21 @@ route across a charted landmass and press Auto route.
   must never crash the Signal K process.
 - **Cap inserted via-points** (`params.maxViaPoints`) and keep computation
   bbox-scoped and cached.
+- **`public/` is gitignored build output, not source.** Edit `src/web/`, never
+  `public/`. The SignalK plugin CI pack-check runs `npm pack --ignore-scripts`
+  (no build), so build scripts MUST log to **stderr** — npm 10 runs `prepare`
+  during `npm pack --json` despite `--ignore-scripts`, and any stdout corrupts
+  the check's JSON parse, failing it on Node 22 (Node 24 / npm 11 skips the
+  build and masks this).
+- **`signalk.appIcon` points at a committed *source* asset, also whitelisted in
+  `files`** — never a `public/` build path. The App Store icon check has both a
+  fresh-checkout source-path test and a tarball test (SignalK/signalk-server#2803);
+  a gitignored `public/...` path fails the source-path test. Here it is
+  `src/web/assets/auto-route.png`, which must be ≥128×128.
+- **`express` is a devDependency for tests only.** At runtime the Signal K server
+  provides it (the plugin `require()`s it lazily and degrades if absent); the
+  devDep exists so the manifest mount test can exercise the mount path in CI. Do
+  not delete it as "unused" or move it to `dependencies`.
 - **Never bump the version** in a contributor PR — maintainers own versioning.
   Follow `type(scope): …` commit/PR titles (scope e.g. `route`, `engine`,
   `charts`).
