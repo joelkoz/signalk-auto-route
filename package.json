@@ -41,7 +41,7 @@
   },
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "assets/auto-route.png",
+    "appIcon": "public/assets/auto-route.png",
     "displayName": "Auto Route",
     "appSupport": "none",
     "recommends": [
