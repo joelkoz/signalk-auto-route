@@ -70,4 +70,7 @@ signalk-charts-provider-simple.</p>
 `
 )
 
-console.log('public/ assets written')
+// Log to stderr, not stdout: on npm 10 `npm pack --json` runs this build
+// (prepare) despite --ignore-scripts, and any stdout here corrupts the
+// machine-readable JSON the SignalK plugin CI pack-check parses.
+console.error('public/ assets written')
